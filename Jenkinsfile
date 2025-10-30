@@ -1,70 +1,59 @@
-pipeline{
-
+pipeline {
   agent any
 
-  stages{
+  stages {
 
-    stage('git checkout'){
-
-      steps{
+    stage('Git Checkout') {
+      steps {
         git branch: 'main', url: 'https://github.com/Sougata1813/Hello.git'
       }
     }
-    stage('unit testing'){
 
-      steps{
+    stage('Unit Testing') {
+      steps {
         sh 'mvn test'
       }
     }
-    stage('integration testing'){
 
-      steps{
+    stage('Integration Testing') {
+      steps {
         sh 'mvn verify -DskipUnitTests'
       }
     }
-    stage('Maven Build'){
 
-      steps{
-        sh 'mvn clean package spring-boot:repackage'
+    stage('Maven Build') {
+      steps {
+        sh 'mvn clean package spring-boot:repackage -DskipTests'
       }
     }
-    stage('Static code analysis'){
 
-      steps{
-
-        script{
-
-            withSonarQubeEnv('sonarqube') {
-            sh 'mvn clean package sonar:sonar'
+    stage('Static Code Analysis') {
+      steps {
+        script {
+          withSonarQubeEnv('sonarqube') {
+            sh 'mvn sonar:sonar'
           }
-
         }
-       
       }
     }
-    stage('quality get status'){
 
-      steps{
-
-        script{
+    stage('Quality Gate Check') {
+      steps {
+        script {
           waitForQualityGate abortPipeline: false, credentialsId: 'sonarqube'
-
         }
-       
       }
     }
-    stage('Docker build image'){
 
-      steps{
-
-        script{
+    stage('Docker Build Image') {
+      steps {
+        script {
           def buildTag = "v${env.BUILD_NUMBER}"
           sh "docker build -t cicdpipeline:${buildTag} ."
-
         }
-       
       }
     }
+
     stage('Deploy Docker Container') {
       steps {
         script {
@@ -81,7 +70,5 @@ pipeline{
         }
       }
     }
-
   }
-
 }
