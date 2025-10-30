@@ -12,7 +12,10 @@
     <maven.compiler.source>${java.version}</maven.compiler.source>
     <maven.compiler.target>${java.version}</maven.compiler.target>
     <spring.boot.version>3.2.0</spring.boot.version>
-  </properties>
+    <sonar.projectKey>HelloApp</sonar.projectKey>
+    <sonar.sources>src/main/java</sonar.sources>
+    <sonar.tests>src/test/java</sonar.tests>
+    </properties>
   <dependencyManagement>
     <dependencies>
       <dependency>
