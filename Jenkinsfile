@@ -75,5 +75,24 @@ pipeline {
         }
       }
     }
+    stage('Docker Cleanup (Keep Last 3 Images)') {
+      steps {
+        script {
+          sh '''
+            echo "Cleaning up old Docker images, keeping last 3..."
+            images_to_delete=$(docker images --format "{{.Repository}}:{{.Tag}}" ${IMAGE_NAME} | sort -r | tail -n +4)
+            if [ -n "$images_to_delete" ]; then
+              echo "$images_to_delete" | xargs -r docker rmi -f
+            else
+              echo "No old images to remove."
+            fi
+          '''
+        }
+      }
+    }
+
+
+
+
   }
 }
