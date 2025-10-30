@@ -31,7 +31,7 @@ pipeline{
     stage('Static code analysis'){
 
       steps{
-        withSonarQubeEnv('jenkins_sonar') {
+        withSonarQubeEnv('sonarqube') {
           sh '''
             mvn clean package sonar:sonar \
               -Dsonar.projectKey=HelloApp \
