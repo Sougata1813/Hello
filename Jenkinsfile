@@ -31,8 +31,11 @@ pipeline{
     stage('Static code analysis'){
 
       steps{
-        waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+        withSonarQubeEnv(credentialsId: 'sonar-token'){
         sh 'mvn clean package sonar:sonar'
+        
+        }
+
       }
     }
 
