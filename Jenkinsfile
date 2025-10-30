@@ -25,7 +25,7 @@ pipeline{
     stage('Maven Build'){
 
       steps{
-        sh 'mvn clean install'
+        sh 'mvn clean package spring-boot:repackage'
       }
     }
     stage('Static code analysis'){
@@ -65,7 +65,7 @@ pipeline{
        
       }
     }
-     stage('Deploy Docker Container') {
+    stage('Deploy Docker Container') {
       steps {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
@@ -76,7 +76,7 @@ pipeline{
             docker rm -f ${containerName} || true
 
             echo "Starting new container from image cicdpipeline:${buildTag}"
-            docker run -d --name ${containerName} -p 8081:8080 cicdpipeline:${buildTag}
+            docker run -d --name ${containerName} -p 9090:8080 cicdpipeline:${buildTag}
           """
         }
       }
