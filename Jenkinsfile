@@ -31,9 +31,26 @@ pipeline{
     stage('Static code analysis'){
 
       steps{
-        withSonarQubeEnv('sonarqube') {
-          sh 'mvn clean package sonar:sonar'
+
+        script{
+
+            withSonarQubeEnv('sonarqube') {
+            sh 'mvn clean package sonar:sonar'
+          }
+
         }
+       
+      }
+    }
+    stage('quality get status'){
+
+      steps{
+
+        script{
+          waitForQualityGet abourtPipeline: false, credentialsId: 'sonarqube'
+
+        }
+       
       }
     }
   }
