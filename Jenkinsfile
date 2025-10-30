@@ -76,7 +76,7 @@ pipeline{
             docker rm -f ${containerName} || true
 
             echo "Starting new container from image cicdpipeline:${buildTag}"
-            docker run -d --name ${containerName} -p 8080:8080 cicdpipeline:${buildTag}
+            docker run -d --name ${containerName} -p 8081:8080 cicdpipeline:${buildTag}
           """
         }
       }
