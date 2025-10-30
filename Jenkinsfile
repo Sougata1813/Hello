@@ -65,6 +65,23 @@ pipeline{
        
       }
     }
+     stage('Deploy Docker Container') {
+      steps {
+        script {
+          def buildTag = "v${env.BUILD_NUMBER}"
+          def containerName = "cicdpipeline_app"
+
+          sh """
+            echo "Stopping old container if exists..."
+            docker rm -f ${containerName} || true
+
+            echo "Starting new container from image cicdpipeline:${buildTag}"
+            docker run -d --name ${containerName} -p 8080:8080 cicdpipeline:${buildTag}
+          """
+        }
+      }
+    }
+
   }
 
 }
