@@ -58,7 +58,8 @@ pipeline{
       steps{
 
         script{
-          sh 'docker image build -t $JOB_NAME:v1.$BUILD_ID'
+          def buildTag = "v${env.BUILD_NUMBER}"
+          sh "docker build -t cicdpipeline:${buildTag} ."
 
         }
        
