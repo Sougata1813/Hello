@@ -1,12 +1,10 @@
 pipeline {
   agent any
 
-    // This block defines Jenkins job properties
-  // It keeps only the last 5 builds and deletes older ones automatically
-      properties([
-         buildDiscarder(logRotator(numToKeepStr: '5'))
-        ]
-      )
+    // Keep only the last 5 builds
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '5'))
+  }
 
   stages {
 
