@@ -28,6 +28,13 @@ pipeline{
         sh 'mvn clean install'
       }
     }
+    stage('Static code analysis'){
+
+      steps{
+        waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+        sh 'mvn clean package sonar:sonar'
+      }
+    }
 
   }
 
