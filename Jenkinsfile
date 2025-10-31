@@ -8,7 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
-    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Jenkins credential (Username + Token or Password)
+    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Jenkins credential (type: Username + PAT or Username + Password)
   }
 
   stages {
@@ -40,59 +40,10 @@ pipeline {
 
     stage('Maven Build') {
       steps {
-        script {
-          echo "🏗️ Building Maven project..."
-
-          // ✅ Use bash so PIPESTATUS works properly
-          def buildStatus = sh(
-            script: '''
-              bash -c "mvn clean package spring-boot:repackage -DskipTests 2>&1 | tee build.log; exit ${PIPESTATUS[0]}"
-            ''',
-            returnStatus: true
-          )
-
-          if (buildStatus != 0) {
-            echo "❌ Maven build failed — initiating rollback sequence..."
-
-            // Step 1️⃣ Detect which file caused the failure
-            echo "🔍 Detecting failed file from build logs..."
-            def failedFile = sh(
-              script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' ${env.WORKSPACE}/build.log | head -1 || true",
-              returnStdout: true
-            ).trim()
-
-            if (failedFile) {
-              echo "⚠️ Build failed due to file: ${failedFile}"
-
-              // Step 2️⃣ Roll back that file to last stable commit
-              if (fileExists("${STABLE_FILE}")) {
-                def lastCommit = readFile("${STABLE_FILE}").trim()
-                echo "🔁 Rolling back ${failedFile} to commit ${lastCommit}"
-
-                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                  sh """
-                    git fetch origin main
-                    git checkout ${lastCommit} -- ${failedFile}
-                    git config user.name "Jenkins"
-                    git config user.email "jenkins@local"
-                    git add ${failedFile}
-                    git commit -m "Build Failure - Rolled back ${failedFile} to previous stable commit"
-                    git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
-                  """
-                }
-              } else {
-                echo "⚠️ No stable commit file found — cannot rollback source file."
-              }
-            } else {
-              echo "⚠️ Could not detect failed file automatically. Skipping file rollback."
-            }
-
-            // Stop pipeline after rollback
-            error("⛔ Maven build failed, rollback executed.")
-          } else {
-            echo "✅ Maven build successful!"
-          }
-        }
+        echo "🏗️ Building Maven project..."
+        sh '''
+          mvn clean package spring-boot:repackage -DskipTests 2>&1 | tee -a build.log
+        '''
       }
     }
 
@@ -159,7 +110,7 @@ pipeline {
         script {
           echo "🧹 Cleaning up old Docker images..."
           sh '''
-            images_to_delete=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | tail -n +4)
+            images_to_delete=$(docker images --format "{{.Repository}}:{{.Tag}}" ${IMAGE_NAME} | sort -r | tail -n +4)
             if [ -n "$images_to_delete" ]; then
               echo "Removing old images:"
               echo "$images_to_delete" | xargs -r docker rmi -f
@@ -179,6 +130,41 @@ pipeline {
 
     failure {
       script {
+        echo "❌ Pipeline failed — initiating rollback sequence..."
+
+        // Step 1️⃣ Detect which file caused the failure
+        echo "🔍 Detecting failed file from build logs..."
+        def failedFile = sh(
+          script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' ${env.WORKSPACE}/build.log | head -1 || true",
+          returnStdout: true
+        ).trim()
+
+        if (failedFile) {
+          echo "⚠️ Build failed due to file: ${failedFile}"
+
+          // Step 2️⃣ Roll back that file to last stable commit
+          if (fileExists("${STABLE_FILE}")) {
+            def lastCommit = readFile("${STABLE_FILE}").trim()
+            echo "🔁 Rolling back ${failedFile} to commit ${lastCommit}"
+
+            withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+              sh """
+                git fetch origin main
+                git checkout ${lastCommit} -- ${failedFile}
+                git config user.name "Jenkins"
+                git config user.email "jenkins@local"
+                git add ${failedFile}
+                git commit -m "Build Failure - Rolled back ${failedFile} to previous stable commit"
+                git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
+              """
+            }
+          } else {
+            echo "⚠️ No stable commit file found — cannot rollback source file."
+          }
+        } else {
+          echo "⚠️ Could not detect failed file automatically. Skipping file rollback."
+        }
+
         // Step 3️⃣ Rollback Docker image
         echo "🔁 Attempting Docker rollback..."
         sh '''
