@@ -8,7 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
-    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Create this Jenkins credential (type: Username with password or PAT)
+    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Create Jenkins credential (type: Username + Password or PAT)
   }
 
   stages {
@@ -119,7 +119,7 @@ pipeline {
 
         // Detect changed files in this failed build
         echo "🔍 Detecting modified files in current commit..."
-        def changedFiles = sh(script: "git diff --name-only HEAD~1 HEAD || true", returnStdout: true).trim().split("\\n")
+        def changedFiles = sh(script: 'git diff --name-only HEAD~1 HEAD || true', returnStdout: true).trim().split("\\n")
 
         if (changedFiles.size() == 0) {
           echo "⚠️ No changed files detected — skipping per-file rollback."
@@ -134,8 +134,8 @@ pipeline {
               withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
                 sh """
                   git fetch origin main
-                  last_commit=$(cat ${STABLE_FILE} 2>/dev/null || echo "HEAD~1")
-                  git checkout $last_commit -- ${file} || echo "⚠️ Could not revert ${file}"
+                  last_commit=\$(cat ${STABLE_FILE} 2>/dev/null || echo "HEAD~1")
+                  git checkout \$last_commit -- ${file} || echo "⚠️ Could not revert ${file}"
                   git config user.name "Sougata1813"
                   git config user.email "sougatapratihar50@gmail.com"
                   git add ${file} || true
