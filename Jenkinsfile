@@ -123,4 +123,74 @@ pipeline {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
-          sh "docker
+          sh "docker build -t ${IMAGE_NAME}:${buildTag} ."
+        }
+      }
+    }
+
+    // 8️⃣ Deploy Docker Container
+    stage('Deploy Docker Container') {
+      steps {
+        script {
+          def buildTag = "v${env.BUILD_NUMBER}"
+          def containerName = "${IMAGE_NAME}_app"
+
+          echo "🚀 Deploying Docker container..."
+          sh """
+            docker rm -f ${containerName} || true
+            docker run -d --name ${containerName} -p 9090:8080 ${IMAGE_NAME}:${buildTag}
+          """
+
+          // Save commit as stable after successful deployment
+          sh 'git rev-parse HEAD > ${STABLE_FILE}'
+        }
+      }
+    }
+
+    // 9️⃣ Docker Cleanup
+    stage('Docker Cleanup (Keep Last 3 Images)') {
+      steps {
+        script {
+          echo "🧹 Cleaning up old Docker images..."
+          sh '''
+            images_to_delete=$(docker images --format "{{.Repository}}:{{.Tag}}" ${IMAGE_NAME} | sort -r | tail -n +4)
+            if [ -n "$images_to_delete" ]; then
+              echo "Removing old images:"
+              echo "$images_to_delete" | xargs -r docker rmi -f
+            else
+              echo "No old images to remove."
+            fi
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    failure {
+      script {
+        echo "📛 Pipeline failed — rolling back Docker image..."
+
+        sh '''
+          container_name="cicdpipeline_app"
+          prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | sed -n 2p)
+          if [ -n "$prev_image" ]; then
+            echo "🔁 Rolling back to previous Docker image: $prev_image"
+            docker rm -f $container_name || true
+            docker run -d --name $container_name -p 9090:8080 $prev_image
+          else
+            echo "⚠️ No previous Docker image found for rollback."
+          fi
+        '''
+      }
+    }
+
+    success {
+      echo "✅ Pipeline succeeded — marked as stable."
+    }
+
+    always {
+      echo "🏁 Pipeline completed (success or failure)."
+    }
+  }
+}
