@@ -136,8 +136,8 @@ def rollbackFailedFileAndDocker() {
         sh """
           git fetch origin main
           git checkout ${lastCommit} -- ${failedFile}
-          git config user.name "Jenkins"
-          git config user.email "jenkins@local"
+          git config user.name "Sougata1813"
+          git config user.email "sougatapratihar50@gmail.com"
           git add ${failedFile}
           git commit -m "Build Failure - Rolled back ${failedFile} to stable commit ${lastCommit}"
           git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
