@@ -8,7 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
-    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Create this Jenkins credential (type: Username with password or Personal Access Token)
+    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Create this Jenkins credential (type: Username with password or PAT)
   }
 
   stages {
@@ -117,27 +117,37 @@ pipeline {
       script {
         echo "❌ Pipeline failed — initiating rollback sequence..."
 
-        // Rollback Git and commit rollback to GitHub
-        if (fileExists("${STABLE_FILE}")) {
-          def lastCommit = readFile("${STABLE_FILE}").trim()
-          echo "🔁 Rolling back Git repository to last stable commit: ${lastCommit}"
+        // Detect changed files in this failed build
+        echo "🔍 Detecting modified files in current commit..."
+        def changedFiles = sh(script: "git diff --name-only HEAD~1 HEAD || true", returnStdout: true).trim().split("\\n")
 
-          withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-            sh """
-              git fetch --all
-              git reset --hard ${lastCommit}
-              git config user.name "Sougata1813"
-              git config user.email "sougatapratihar50@gmail.com"
-              git add -A
-              git commit -m "Build Failure - rollback to last stable commit"
-              git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main --force
-            """
-          }
+        if (changedFiles.size() == 0) {
+          echo "⚠️ No changed files detected — skipping per-file rollback."
         } else {
-          echo "⚠️ No stable commit found — Git rollback skipped."
+          echo "🗂️ Files changed in this build: ${changedFiles}"
+
+          // Roll back each file that matches known types
+          changedFiles.each { file ->
+            if (file ==~ /.*\\.(java|sql|xml|prc|pck)$/) {
+              echo "🔁 Rolling back file: ${file}"
+
+              withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                sh """
+                  git fetch origin main
+                  last_commit=$(cat ${STABLE_FILE} 2>/dev/null || echo "HEAD~1")
+                  git checkout $last_commit -- ${file} || echo "⚠️ Could not revert ${file}"
+                  git config user.name "Sougata1813"
+                  git config user.email "sougatapratihar50@gmail.com"
+                  git add ${file} || true
+                  git commit -m "Build Failure - Rolled back ${file} to last stable commit" || echo "No changes to commit"
+                  git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
+                """
+              }
+            }
+          }
         }
 
-        // Rollback Docker
+        // Docker rollback (same as before)
         sh '''
           echo "🔁 Attempting Docker rollback..."
           container_name="${IMAGE_NAME}_app"
