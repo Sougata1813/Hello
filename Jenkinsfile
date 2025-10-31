@@ -43,7 +43,8 @@ pipeline {
         echo "🏗️ Building Maven project..."
         sh '''
           mvn clean package spring-boot:repackage -DskipTests 2>&1 | tee -a build.log
-        '''
+        ''',
+        returnStatus: true
       }
     }
 
