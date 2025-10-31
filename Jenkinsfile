@@ -8,6 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
+    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Create this Jenkins credential (type: Username with password or Personal Access Token)
   }
 
   stages {
@@ -116,11 +117,22 @@ pipeline {
       script {
         echo "❌ Pipeline failed — initiating rollback sequence..."
 
-        // Rollback Git
+        // Rollback Git and commit rollback to GitHub
         if (fileExists("${STABLE_FILE}")) {
           def lastCommit = readFile("${STABLE_FILE}").trim()
           echo "🔁 Rolling back Git repository to last stable commit: ${lastCommit}"
-          sh "git fetch --all && git reset --hard ${lastCommit}"
+
+          withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+            sh """
+              git fetch --all
+              git reset --hard ${lastCommit}
+              git config user.name "Sougata1813"
+              git config user.email "sougatapratihar50@gmail.com"
+              git add -A
+              git commit -m "Build Failure - rollback to last stable commit"
+              git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main --force
+            """
+          }
         } else {
           echo "⚠️ No stable commit found — Git rollback skipped."
         }
