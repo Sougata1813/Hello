@@ -8,7 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
-    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Jenkins credential (type: Username + Password or PAT)
+    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Jenkins credential (type: Username + PAT or Username + Password)
   }
 
   stages {
@@ -23,21 +23,27 @@ pipeline {
     stage('Unit Testing') {
       steps {
         echo "🧪 Running Unit Tests..."
-        sh 'mvn test | tee build.log'
+        sh '''
+          mvn test 2>&1 | tee build.log
+        '''
       }
     }
 
     stage('Integration Testing') {
       steps {
         echo "🔬 Running Integration Tests..."
-        sh 'mvn verify -DskipUnitTests | tee -a build.log'
+        sh '''
+          mvn verify -DskipUnitTests 2>&1 | tee -a build.log
+        '''
       }
     }
 
     stage('Maven Build') {
       steps {
         echo "🏗️ Building Maven project..."
-        sh 'mvn clean package spring-boot:repackage -DskipTests | tee -a build.log'
+        sh '''
+          mvn clean package spring-boot:repackage -DskipTests 2>&1 | tee -a build.log
+        '''
       }
     }
 
@@ -46,7 +52,9 @@ pipeline {
         script {
           echo "📊 Running SonarQube Analysis..."
           withSonarQubeEnv('sonarqube') {
-            sh 'mvn sonar:sonar | tee -a build.log'
+            sh '''
+              mvn sonar:sonar 2>&1 | tee -a build.log
+            '''
           }
         }
       }
@@ -66,7 +74,9 @@ pipeline {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
-          sh "docker build -t ${IMAGE_NAME}:${buildTag} ."
+          sh """
+            docker build -t ${IMAGE_NAME}:${buildTag} .
+          """
         }
       }
     }
@@ -119,34 +129,43 @@ pipeline {
     }
 
     failure {
-      echo "❌ Pipeline failed — initiating rollback sequence..."
-
       script {
+        echo "❌ Pipeline failed — initiating rollback sequence..."
+
+        // Step 1️⃣ Detect which file caused the failure
         echo "🔍 Detecting failed file from build logs..."
-        // Extract first file ending with .java, .sql, .xml, .prc, or .pck
         def failedFile = sh(
-          script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' build.log | head -1 || true",
+          script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' ${env.WORKSPACE}/build.log | head -1 || true",
           returnStdout: true
         ).trim()
 
         if (failedFile) {
           echo "⚠️ Build failed due to file: ${failedFile}"
-          withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-            sh """
-              git config user.name "Sougata1813"
-              git config user.email "sougatapratihar50@gmail.com"
-              echo "🔁 Rolling back ${failedFile} to previous commit..."
-              git checkout HEAD~1 -- ${failedFile}
-              git add ${failedFile}
-              git commit -m "Build Failure - rolled back ${failedFile}"
-              git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git main
-            """
+
+          // Step 2️⃣ Roll back that file to last stable commit
+          if (fileExists("${STABLE_FILE}")) {
+            def lastCommit = readFile("${STABLE_FILE}").trim()
+            echo "🔁 Rolling back ${failedFile} to commit ${lastCommit}"
+
+            withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+              sh """
+                git fetch origin main
+                git checkout ${lastCommit} -- ${failedFile}
+                git config user.name "Jenkins"
+                git config user.email "jenkins@local"
+                git add ${failedFile}
+                git commit -m "Build Failure - Rolled back ${failedFile} to previous stable commit"
+                git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
+              """
+            }
+          } else {
+            echo "⚠️ No stable commit file found — cannot rollback source file."
           }
         } else {
           echo "⚠️ Could not detect failed file automatically. Skipping file rollback."
         }
 
-        // Docker rollback to previous stable image
+        // Step 3️⃣ Rollback Docker image
         echo "🔁 Attempting Docker rollback..."
         sh '''
           container_name="cicdpipeline_app"
@@ -160,6 +179,10 @@ pipeline {
           fi
         '''
       }
+    }
+
+    success {
+      echo "✅ Pipeline succeeded — marked as stable."
     }
   }
 }
