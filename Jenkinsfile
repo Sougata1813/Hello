@@ -112,62 +112,50 @@ pipeline {
     }
   }
 
-    post {
-      failure {
-        script {
-          echo "❌ Pipeline failed — initiating rollback sequence..."
-
-          echo "🔍 Detecting modified files in current commit..."
-          def changedFiles = sh(script: 'git diff --name-only HEAD~1 HEAD || true', returnStdout: true).trim().split("\\n")
-
-          if (changedFiles.size() == 0) {
-            echo "⚠️ No changed files detected — skipping rollback."
-          } else {
-            echo "🗂️ Files changed in this build: ${changedFiles}"
-
-            changedFiles.each { file ->
-              if (file ==~ /.*\\.(java|sql|xml|prc|pck)$/) {
-                echo "🔁 Rolling back file: ${file}"
-                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                  sh """
-                    set -e
-                    git fetch origin main
-                    last_commit=\$(cat ${STABLE_FILE} 2>/dev/null || echo "HEAD~1")
-                    echo "Restoring from commit \$last_commit"
-                    git checkout \$last_commit -- ${file} || echo "⚠️ Could not revert ${file}"
-                    git config user.name "Sougata1813"
-                    git config user.email "sougatapratihar50@gmail.com"
-                    git add ${file} || true
-                    git commit -m "Build Failure - Rolled back ${file} to last stable commit" || echo "⚠️ Nothing to commit"
-                    git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main || echo "⚠️ Push failed, check credentials"
-                  """
-                }
-              }
-            }
-          }
-
-          // Docker rollback
-          sh '''
-            echo "🔁 Attempting Docker rollback..."
-            container_name="${IMAGE_NAME}_app"
-            prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" ${IMAGE_NAME} | sort -r | sed -n '2p')
-            if [ -n "$prev_image" ]; then
-              echo "Rolling back to previous Docker image: $prev_image"
-              docker rm -f $container_name || true
-              docker run -d --name $container_name -p 9090:8080 $prev_image
-            else
-              echo "⚠️ No previous image found to roll back."
-            fi
-          '''
-        }
-      }
-
-      success {
-        echo "✅ Pipeline succeeded — build marked as stable."
-      }
-
-      always {
+  post {
+    always {
         echo "🏁 Pipeline execution completed (success or failure)."
-      }
     }
+    failure {
+        echo "❌ Pipeline failed — initiating rollback sequence..."
+
+        script {
+            // Try to find which file caused the build to fail (.java, .sql, .xml, .prc, .pck)
+            echo "🔍 Detecting failed file from build logs..."
+            def failedFile = sh(
+                script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' ${env.WORKSPACE}/build.log | head -1 || true",
+                returnStdout: true
+            ).trim()
+
+            if (failedFile) {
+                echo "⚠️ Build failed due to file: ${failedFile}"
+                sh """
+                    git config user.name "Jenkins"
+                    git config user.email "jenkins@local"
+                    echo "🔁 Rolling back ${failedFile} to previous commit..."
+                    git checkout HEAD~1 -- ${failedFile}
+                    git commit -am "Build Failure - rolled back ${failedFile}"
+                    git push origin main
+                """
+            } else {
+                echo "⚠️ Could not detect failed file automatically. Skipping rollback."
+            }
+
+            // Optional: Redeploy last stable Docker image
+            echo "🔁 Attempting Docker rollback..."
+            sh '''
+                container_name="cicdpipeline_app"
+                prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | sed -n 2p)
+                if [ -n "$prev_image" ]; then
+                    echo "Rolling back to previous Docker image: $prev_image"
+                    docker rm -f $container_name || true
+                    docker run -d --name $container_name -p 9090:8080 $prev_image
+                else
+                    echo "⚠️ No previous Docker image found for rollback."
+                fi
+            '''
+        }
+        
+    }
+  }
 }
