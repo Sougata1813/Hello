@@ -24,14 +24,21 @@ pipeline {
       steps {
         script {
           echo "🏗️ Running Maven Build & Tests..."
-          try {
-            sh '''
-              mvn clean test package spring-boot:repackage 2>&1 | tee build.log
-            '''
-          } catch (err) {
-            error("❌ Maven build failed!")
+           try {
+          // Run Maven build and capture logs
+          sh '''
+            mvn clean test package spring-boot:repackage 2>&1 | tee build.log
+          '''
+
+          // Check if JAR exists (verifies successful build)
+          if (!fileExists('target/*.jar')) {
+            error("❌ Maven build did not produce a JAR file — possible compile/test failure.")
           }
+
+        } catch (err) {
+          error("❌ Maven build failed! Check build.log for details.")
         }
+      }
       }
     }
 
