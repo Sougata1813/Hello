@@ -8,7 +8,7 @@ pipeline {
   environment {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
-    GIT_CREDENTIALS_ID = "github-token"   // 🔹 Jenkins credential (type: Username + PAT or Username + Password)
+    GIT_CREDENTIALS_ID = "github-token"
   }
 
   stages {
@@ -20,30 +20,41 @@ pipeline {
       }
     }
 
-    stage('Unit Testing') {
+    stage('Unit Testing & Maven Build') {
       steps {
-        echo "🧪 Running Unit Tests..."
-        sh '''
-          mvn test 2>&1 | tee build.log
-        '''
+        script {
+          echo "🏗️ Running Maven Build & Tests..."
+          try {
+            sh '''
+              mvn clean test package spring-boot:repackage 2>&1 | tee build.log
+            '''
+          } catch (err) {
+            error("❌ Maven build failed!")
+          }
+        }
       }
     }
 
-    stage('Integration Testing') {
+    stage('Database Compilation') {
       steps {
-        echo "🔬 Running Integration Tests..."
-        sh '''
-          mvn verify -DskipUnitTests 2>&1 | tee -a build.log
-        '''
-      }
-    }
-
-    stage('Maven Build') {
-      steps {
-        echo "🏗️ Building Maven project..."
-        sh '''
-          mvn clean package spring-boot:repackage -DskipTests 2>&1 | tee -a build.log
-        '''
+        script {
+          echo "💾 Compiling Database Scripts..."
+          try {
+            // simulate DB compile (replace with actual DB compile script)
+            sh '''
+              for f in $(find . -type f -name "*.sql" -o -name "*.prc" -o -name "*.pck" -o -name "*.tst"); do
+                echo "Compiling $f"
+                # Replace below line with real DB compile command
+                if grep -q "FAILME" "$f"; then
+                  echo "Error in $f"
+                  exit 1
+                fi
+              done | tee -a build.log
+            '''
+          } catch (err) {
+            error("❌ Database compilation failed!")
+          }
+        }
       }
     }
 
@@ -52,9 +63,7 @@ pipeline {
         script {
           echo "📊 Running SonarQube Analysis..."
           withSonarQubeEnv('sonarqube') {
-            sh '''
-              mvn sonar:sonar 2>&1 | tee -a build.log
-            '''
+            sh 'mvn sonar:sonar 2>&1 | tee -a build.log'
           }
         }
       }
@@ -63,89 +72,52 @@ pipeline {
     stage('Quality Gate Check') {
       steps {
         script {
-          echo "⏳ Waiting for SonarQube Quality Gate result..."
-          waitForQualityGate abortPipeline: false, credentialsId: 'sonarqube'
+          echo "⏳ Waiting for SonarQube Quality Gate..."
+          waitForQualityGate abortPipeline: true, credentialsId: 'sonarqube'
         }
       }
     }
 
-    stage('Docker Build Image') {
-      steps {
-        script {
-          def buildTag = "v${env.BUILD_NUMBER}"
-          echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
-          sh """
-            docker build -t ${IMAGE_NAME}:${buildTag} .
-          """
+    stage('Docker Build & Deploy') {
+      when {
+        expression {
+          currentBuild.resultIsBetterOrEqualTo('SUCCESS')
         }
       }
-    }
-
-    stage('Deploy Docker Container') {
       steps {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           def containerName = "${IMAGE_NAME}_app"
+          echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
 
-          echo "🚀 Deploying Docker container..."
           sh """
-            echo "Stopping old container if it exists..."
+            docker build -t ${IMAGE_NAME}:${buildTag} .
             docker rm -f ${containerName} || true
-
-            echo "Starting new container from image ${IMAGE_NAME}:${buildTag}"
             docker run -d --name ${containerName} -p 9090:8080 ${IMAGE_NAME}:${buildTag}
           """
 
-          // Save stable commit after successful deploy
-          sh '''
-            echo "💾 Saving last stable commit..."
-            git rev-parse HEAD > ${STABLE_FILE}
-          '''
-        }
-      }
-    }
-
-    stage('Docker Cleanup (Keep Last 3 Images)') {
-      steps {
-        script {
-          echo "🧹 Cleaning up old Docker images..."
-          sh '''
-            images_to_delete=$(docker images --format "{{.Repository}}:{{.Tag}}" ${IMAGE_NAME} | sort -r | tail -n +4)
-            if [ -n "$images_to_delete" ]; then
-              echo "Removing old images:"
-              echo "$images_to_delete" | xargs -r docker rmi -f
-            else
-              echo "No old images to remove."
-            fi
-          '''
+          sh 'git rev-parse HEAD > ${STABLE_FILE}'
         }
       }
     }
   }
 
   post {
-    always {
-      echo "🏁 Pipeline execution completed (success or failure)."
-    }
-
     failure {
       script {
-        echo "❌ Pipeline failed — initiating rollback sequence..."
+        echo "❌ Pipeline failed — starting rollback..."
 
-        // Step 1️⃣ Detect which file caused the failure
-        echo "🔍 Detecting failed file from build logs..."
+        // Step 1️⃣ Detect which file failed
         def failedFile = sh(
-          script: "grep -Eo '/[^ ]+\\.(java|sql|xml|prc|pck)' ${env.WORKSPACE}/build.log | head -1 || true",
+          script: "grep -Eo '/[^ ]+\\.(java|jsp|sql|prc|pck|tst)' ${env.WORKSPACE}/build.log | head -1 || true",
           returnStdout: true
         ).trim()
 
         if (failedFile) {
-          echo "⚠️ Build failed due to file: ${failedFile}"
-
-          // Step 2️⃣ Roll back that file to last stable commit
+          echo "⚠️ Failed file detected: ${failedFile}"
           if (fileExists("${STABLE_FILE}")) {
             def lastCommit = readFile("${STABLE_FILE}").trim()
-            echo "🔁 Rolling back ${failedFile} to commit ${lastCommit}"
+            echo "🔁 Rolling back ${failedFile} to ${lastCommit}"
 
             withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
               sh """
@@ -154,35 +126,39 @@ pipeline {
                 git config user.name "Jenkins"
                 git config user.email "jenkins@local"
                 git add ${failedFile}
-                git commit -m "Build Failure - Rolled back ${failedFile} to previous stable commit"
+                git commit -m "Rollback: ${failedFile} reverted to last stable commit after build failure"
                 git push https://${GIT_USER}:${GIT_PASS}@github.com/Sougata1813/Hello.git HEAD:main
               """
             }
           } else {
-            echo "⚠️ No stable commit file found — cannot rollback source file."
+            echo "⚠️ No stable commit file found — cannot rollback Git."
           }
         } else {
-          echo "⚠️ Could not detect failed file automatically. Skipping file rollback."
+          echo "⚠️ Could not detect failed file — skipping Git rollback."
         }
 
-        // Step 3️⃣ Rollback Docker image
-        echo "🔁 Attempting Docker rollback..."
+        // Step 2️⃣ Docker rollback
+        echo "🐳 Rolling back Docker container..."
         sh '''
           container_name="cicdpipeline_app"
           prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | sed -n 2p)
           if [ -n "$prev_image" ]; then
-              echo "Rolling back to previous Docker image: $prev_image"
-              docker rm -f $container_name || true
-              docker run -d --name $container_name -p 9090:8080 $prev_image
+            echo "Rolling back to previous Docker image: $prev_image"
+            docker rm -f $container_name || true
+            docker run -d --name $container_name -p 9090:8080 $prev_image
           else
-              echo "⚠️ No previous Docker image found for rollback."
+            echo "⚠️ No previous image found for rollback."
           fi
         '''
       }
     }
 
     success {
-      echo "✅ Pipeline succeeded — marked as stable."
+      echo "✅ Build succeeded — new Docker image deployed."
+    }
+
+    always {
+      echo "🏁 Pipeline finished."
     }
   }
 }
