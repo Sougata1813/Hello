@@ -23,22 +23,26 @@ pipeline {
     stage('Unit Testing & Maven Build') {
       steps {
         script {
-          echo "🏗️ Running Maven Build & Tests..."
-           try {
-          // Run Maven build and capture logs
-          sh '''
-            mvn clean test package spring-boot:repackage 2>&1 | tee build.log
-          '''
+      echo "🏗️ Running Maven Build & Tests..."
+      try {
+        // Run Maven build
+        sh '''
+          echo "Cleaning and packaging application..."
+          mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log
+        '''
 
-          // Check if JAR exists (verifies successful build)
-          if (!fileExists('target/*.jar')) {
-            error("❌ Maven build did not produce a JAR file — possible compile/test failure.")
-          }
-
-        } catch (err) {
-          error("❌ Maven build failed! Check build.log for details.")
+        // Check if JAR file was created successfully
+        def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
+        if (jarStatus == '0') {
+          error("❌ Maven build did not produce a JAR file — check your pom.xml or source files.")
         }
+
+        echo "✅ Maven build successful — JAR found in target/."
+      } catch (err) {
+        echo "❌ Maven build failed! Check build.log for details."
+        error("❌ Maven build failed.")
       }
+    }
       }
     }
 
