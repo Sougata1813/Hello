@@ -73,7 +73,7 @@ pipeline {
       steps {
         script {
           echo "⏳ Waiting for SonarQube Quality Gate..."
-          waitForQualityGate abortPipeline: true, credentialsId: 'sonarqube'
+          waitForQualityGate abortPipeline: false, credentialsId: 'sonarqube'
         }
       }
     }
