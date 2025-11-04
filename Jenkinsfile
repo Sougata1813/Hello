@@ -9,6 +9,8 @@ pipeline {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
     GIT_CREDENTIALS_ID = "github-token"
+    DOCKER_HUB_CREDENTIALS_ID = "docker-token"   // <-- Add your Docker Hub credential ID here
+    DOCKERHUB_USER = "Sougata18"             // <-- Replace with your Docker Hub username
   }
 
   stages {
@@ -23,26 +25,22 @@ pipeline {
     stage('Unit Testing & Maven Build') {
       steps {
         script {
-      echo "🏗️ Running Maven Build & Tests..."
-      try {
-        // Run Maven build
-        sh '''
-          echo "Cleaning and packaging application..."
-          mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log
-        '''
-
-        // Check if JAR file was created successfully
-        def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
-        if (jarStatus == '0') {
-          error("❌ Maven build did not produce a JAR file — check your pom.xml or source files.")
+          echo "🏗️ Running Maven Build & Tests..."
+          try {
+            sh '''
+              echo "Cleaning and packaging application..."
+              mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log
+            '''
+            def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
+            if (jarStatus == '0') {
+              error("❌ Maven build did not produce a JAR file — check your pom.xml or source files.")
+            }
+            echo "✅ Maven build successful — JAR found in target/."
+          } catch (err) {
+            echo "❌ Maven build failed! Check build.log for details."
+            error("❌ Maven build failed.")
+          }
         }
-
-        echo "✅ Maven build successful — JAR found in target/."
-      } catch (err) {
-        echo "❌ Maven build failed! Check build.log for details."
-        error("❌ Maven build failed.")
-      }
-    }
       }
     }
 
@@ -51,11 +49,9 @@ pipeline {
         script {
           echo "💾 Compiling Database Scripts..."
           try {
-            // simulate DB compile (replace with actual DB compile script)
             sh '''
               for f in $(find . -type f -name "*.sql" -o -name "*.prc" -o -name "*.pck" -o -name "*.tst"); do
                 echo "Compiling $f"
-                # Replace below line with real DB compile command
                 if grep -q "FAILME" "$f"; then
                   echo "Error in $f"
                   exit 1
@@ -99,15 +95,40 @@ pipeline {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           def containerName = "${IMAGE_NAME}_app"
+
           echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
 
           sh """
             docker build -t ${IMAGE_NAME}:${buildTag} .
+            docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
             docker rm -f ${containerName} || true
             docker run -d --name ${containerName} -p 9090:8080 ${IMAGE_NAME}:${buildTag}
           """
 
           sh 'git rev-parse HEAD > ${STABLE_FILE}'
+        }
+      }
+    }
+
+    // ✅ New Stage — Push to Docker Hub
+    stage('Push Docker Image to Docker Hub') {
+      steps {
+        script {
+          def buildTag = "v${env.BUILD_NUMBER}"
+
+          echo "📤 Pushing Docker image to Docker Hub as ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}"
+
+          withCredentials([usernamePassword(
+              credentialsId: "${DOCKER_HUB_CREDENTIALS_ID}",
+              usernameVariable: 'DOCKER_USER',
+              passwordVariable: 'DOCKER_PASS'
+          )]) {
+            sh """
+              echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+              docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
+              docker logout
+            """
+          }
         }
       }
     }
@@ -118,7 +139,6 @@ pipeline {
       script {
         echo "❌ Pipeline failed — starting rollback..."
 
-        // Step 1️⃣ Detect which file failed
         def failedFile = sh(
           script: "grep -Eo '/[^ ]+\\.(java|jsp|sql|prc|pck|tst)' ${env.WORKSPACE}/build.log | head -1 || true",
           returnStdout: true
@@ -148,7 +168,6 @@ pipeline {
           echo "⚠️ Could not detect failed file — skipping Git rollback."
         }
 
-        // Step 2️⃣ Docker rollback
         echo "🐳 Rolling back Docker container..."
         sh '''
           container_name="cicdpipeline_app"
@@ -165,7 +184,7 @@ pipeline {
     }
 
     success {
-      echo "✅ Build succeeded — new Docker image deployed."
+      echo "✅ Build succeeded — new Docker image deployed and pushed to Docker Hub."
     }
 
     always {
