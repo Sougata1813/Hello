@@ -2,20 +2,24 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.example</groupId>
   <artifactId>java17-demo</artifactId>
   <version>0.1.0</version>
   <packaging>jar</packaging>
+  <name>Java17 Demo App</name>
 
   <properties>
     <java.version>17</java.version>
     <maven.compiler.source>${java.version}</maven.compiler.source>
     <maven.compiler.target>${java.version}</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring.boot.version>3.2.0</spring.boot.version>
   </properties>
 
+  <!-- Spring Boot dependency management -->
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -28,11 +32,13 @@
     </dependencies>
   </dependencyManagement>
 
+  <!-- Project dependencies -->
   <dependencies>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
@@ -43,7 +49,7 @@
   <build>
     <plugins>
 
-      <!-- Compiler plugin -->
+      <!-- Java Compiler -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -53,10 +59,32 @@
         </configuration>
       </plugin>
 
+      <!-- JaCoCo plugin for coverage -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
       <!-- Spring Boot plugin -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring.boot.version}</version>
         <configuration>
           <mainClass>com.example.demo.DemoApplication</mainClass>
         </configuration>
@@ -69,13 +97,25 @@
         </executions>
       </plugin>
 
-      <!-- SonarQube plugin -->
+      <!-- SonarQube plugin (latest stable) -->
       <plugin>
         <groupId>org.sonarsource.scanner.maven</groupId>
         <artifactId>sonar-maven-plugin</artifactId>
-        <version>3.10.0.4318</version>
+        <version>4.0.0.4121</version>
       </plugin>
 
     </plugins>
   </build>
+
+  <!-- Optional: define test coverage path for Sonar -->
+  <profiles>
+    <profile>
+      <id>coverage</id>
+      <properties>
+        <sonar.coverage.jacoco.xmlReportPaths>
+          target/site/jacoco/jacoco.xml
+        </sonar.coverage.jacoco.xmlReportPaths>
+      </properties>
+    </profile>
+  </profiles>
 </project>
