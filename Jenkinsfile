@@ -111,31 +111,30 @@ pipeline {
     }
 
     // ✅ Push Docker Image to Docker Hub
-    stage('Push Docker Image to Docker Hub') {
-      steps {
-        script {
-          // Define build tag (same as image tag from your build stage)
-          def buildTag = "v${env.BUILD_NUMBER}"
+      stage('Push Docker Image to Docker Hub') {
+    steps {
+      script {
+        def buildTag = "v${env.BUILD_NUMBER}"
+
+        withCredentials([usernamePassword(
+          credentialsId: 'docker-token', // Jenkins credential ID
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
 
           echo "📤 Pushing Docker image to Docker Hub as ${DOCKER_USER}/${IMAGE_NAME}:${buildTag}"
 
-          // Use Jenkins credentials (Username + Password)
-          withCredentials([usernamePassword(
-            credentialsId: 'docker-token', // 🔹 Jenkins credential ID
-            usernameVariable: 'DOCKER_USER',
-            passwordVariable: 'DOCKER_PASS'
-          )]) {
-
-            sh """
-              echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-              docker tag ${IMAGE_NAME}:${buildTag} $DOCKER_USER/${IMAGE_NAME}:${buildTag}
-              docker push $DOCKER_USER/${IMAGE_NAME}:${buildTag}
-              docker logout
-            """
-          }
+          sh """
+            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+            docker tag ${IMAGE_NAME}:${buildTag} $DOCKER_USER/${IMAGE_NAME}:${buildTag}
+            docker push $DOCKER_USER/${IMAGE_NAME}:${buildTag}
+            docker logout
+          """
         }
       }
     }
+  }
+
 
   }
 
