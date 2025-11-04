@@ -10,7 +10,7 @@ pipeline {
     STABLE_FILE = "last_stable_commit.txt"
     GIT_CREDENTIALS_ID = "github-token"
     DOCKER_HUB_CREDENTIALS_ID = "docker-token"   // <-- Add your Docker Hub credential ID here
-    DOCKERHUB_USER = "Sougata18"             // <-- Replace with your Docker Hub username
+    DOCKERHUB_USER = "sougata18"             // <-- Replace with your Docker Hub username
   }
 
   stages {
