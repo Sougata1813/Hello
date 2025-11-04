@@ -117,7 +117,7 @@ pipeline {
         def buildTag = "v${env.BUILD_NUMBER}"
 
         withCredentials([usernamePassword(
-          credentialsId: 'docker-token', // Jenkins credential ID
+          credentialsId: 'DOCKER_HUB_CREDENTIALS_ID', // Jenkins credential ID
           usernameVariable: 'DOCKER_USER',
           passwordVariable: 'DOCKER_PASS'
         )]) {
