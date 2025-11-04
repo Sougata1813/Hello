@@ -124,12 +124,12 @@ pipeline {
 
           echo "📤 Pushing Docker image to Docker Hub as ${DOCKER_USER}/${IMAGE_NAME}:${buildTag}"
 
-          sh """
+          sh '''
             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
             docker tag ${IMAGE_NAME}:${buildTag} $DOCKER_USER/${IMAGE_NAME}:${buildTag}
             docker push $DOCKER_USER/${IMAGE_NAME}:${buildTag}
             docker logout
-          """
+          '''
         }
       }
     }
