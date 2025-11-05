@@ -103,6 +103,47 @@ pipeline {
             }
         }
 
+        stage('Cleanup Old Docker Images') {
+            steps {
+                script {
+                    withCredentials([
+                        [$class: 'UsernamePasswordMultiBinding', credentialsId: "${DOCKER_HUB_CREDENTIALS_ID}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'],
+                        [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]
+                    ]) {
+                        sh """
+                            set -e
+
+                            echo "📦 Cleaning old images from ECR..."
+                            aws ecr describe-images --repository-name ${IMAGE_NAME} --region ${AWS_REGION} \
+                                --query 'sort_by(imageDetails,& imagePushedAt)[].imageTags[0]' --output text | tr '\\t' '\\n' > all_tags.txt
+                            tail -n +11 all_tags.txt > old_tags.txt
+                            for tag in \$(cat old_tags.txt); do
+                                echo "Deleting ECR image: \$tag"
+                                aws ecr batch-delete-image --repository-name ${IMAGE_NAME} --image-ids imageTag=\$tag --region ${AWS_REGION}
+                            done
+
+                            echo "📦 Cleaning old images from Docker Hub..."
+                            TOKEN=\$(curl -s -H "Content-Type: application/json" \
+                                -X POST -d '{\"username\":\"'$DOCKER_USER'\",\"password\":\"'$DOCKER_PASS'\"}' \
+                                https://hub.docker.com/v2/users/login/ | jq -r .token)
+                            curl -s -H "Authorization: JWT \$TOKEN" \
+                                "https://hub.docker.com/v2/repositories/${DOCKERHUB_USER}/${IMAGE_NAME}/tags?page_size=100" \
+                                | jq -r '.results | sort_by(.last_updated) | .[].name' > all_tags_dockerhub.txt
+                            tail -n +11 all_tags_dockerhub.txt > old_tags_dockerhub.txt
+                            for tag in \$(cat old_tags_dockerhub.txt); do
+                                echo "Deleting Docker Hub image: \$tag"
+                                curl -s -X DELETE -H "Authorization: JWT \$TOKEN" \
+                                    "https://hub.docker.com/v2/repositories/${DOCKERHUB_USER}/${IMAGE_NAME}/tags/\$tag/"
+                            done
+
+                            echo "✅ Cleanup complete. Only last 10 images are kept."
+                        """
+                    }
+                }
+            }
+        }
+
+
         stage('Deploy Latest ECR Image to ECS') {
             steps {
                 script {
