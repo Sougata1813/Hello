@@ -13,12 +13,12 @@ pipeline {
     DOCKERHUB_USER = "sougata18"
 
     // --- AWS Configuration ---
-    AWS_CREDENTIALS_ID = "aws-creds"             // Jenkins AWS Credentials ID
+    AWS_CREDENTIALS_ID = "aws-creds"
     AWS_REGION = "us-east-1"
-    AWS_ACCOUNT_ID = "654654627536"              // Replace with your AWS account ID
+    AWS_ACCOUNT_ID = "654654627536"
     ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
-    ECS_CLUSTER = "mycicdpipeline"                 // Replace with your ECS Cluster name
-    ECS_SERVICE = "cicdpipeline_family-service-r6vn091o"                 // Replace with your ECS Service name
+    ECS_CLUSTER = "mycicdpipeline"
+    ECS_SERVICE = "cicdpipeline_family-service-r6vn091o"
   }
 
   stages {
@@ -101,7 +101,6 @@ pipeline {
             docker build -t ${IMAGE_NAME}:${buildTag} .
             docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
             docker rm -f ${containerName} || true
-            
           """
 
           sh 'git rev-parse HEAD > ${STABLE_FILE}'
@@ -129,7 +128,6 @@ pipeline {
       }
     }
 
-    // ✅ Push Docker Image to AWS ECR
     stage('Push Docker Image to AWS ECR') {
       steps {
         script {
@@ -146,25 +144,57 @@ pipeline {
       }
     }
 
-    // ✅ Deploy Image to AWS ECS
+    // ✅ FIXED DEPLOYMENT STAGE
     stage('Deploy to AWS ECS') {
       steps {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           echo "🚀 Deploying image ${ECR_REPO}:${buildTag} to ECS..."
+
           withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
             sh """
-              TASK_DEF=\$(aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].taskDefinition" --output text)
-              NEW_TASK_DEF=\$(aws ecs describe-task-definition --task-definition \$TASK_DEF --query "taskDefinition" | \
-                jq --arg IMAGE "${ECR_REPO}:${buildTag}" '.containerDefinitions[0].image=$IMAGE_NAME | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' | \
-                aws ecs register-task-definition --cli-input-json file:///dev/stdin --query "taskDefinition.taskDefinitionArn" --output text)
-              aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition \$NEW_TASK_DEF
+              set -e
+              CLUSTER="${ECS_CLUSTER}"
+              SERVICE="${ECS_SERVICE}"
+              IMAGE="${ECR_REPO}:${buildTag}"
+
+              echo "📦 Fetching current task definition..."
+              TASK_DEF_ARN=\$(aws ecs describe-services \
+                --cluster \$CLUSTER \
+                --services \$SERVICE \
+                --query "services[0].taskDefinition" \
+                --output text)
+
+              echo "🧾 Describing task definition: \$TASK_DEF_ARN"
+              aws ecs describe-task-definition \
+                --task-definition \$TASK_DEF_ARN \
+                --query "taskDefinition" > task-def.json
+
+              echo "🛠️ Updating container image in task definition..."
+              cat task-def.json | jq --arg IMAGE "\$IMAGE" \
+                '.containerDefinitions[0].image = \$IMAGE
+                 | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' > new-task-def.json
+
+              echo "📋 Registering new task definition..."
+              NEW_TASK_DEF_ARN=\$(aws ecs register-task-definition \
+                --cli-input-json file://new-task-def.json \
+                --query "taskDefinition.taskDefinitionArn" \
+                --output text)
+
+              echo "✅ New task definition: \$NEW_TASK_DEF_ARN"
+
+              echo "🚀 Updating ECS service..."
+              aws ecs update-service \
+                --cluster \$CLUSTER \
+                --service \$SERVICE \
+                --task-definition \$NEW_TASK_DEF_ARN
+
+              echo "🎉 ECS deployment initiated successfully!"
             """
           }
         }
       }
     }
-
 
   }
 
