@@ -17,8 +17,8 @@ pipeline {
     AWS_REGION = "us-east-1"
     AWS_ACCOUNT_ID = "654654627536"              // Replace with your AWS account ID
     ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
-    //ECS_CLUSTER = "MyECSCluster"                 // Replace with your ECS Cluster name
-    //ECS_SERVICE = "MyECSService"                 // Replace with your ECS Service name
+    ECS_CLUSTER = "mycicdpipeline"                 // Replace with your ECS Cluster name
+    ECS_SERVICE = "cicdpipeline_family-service-r6vn091o"                 // Replace with your ECS Service name
   }
 
   stages {
@@ -146,7 +146,24 @@ pipeline {
       }
     }
 
-
+    // ✅ Deploy Image to AWS ECS
+    stage('Deploy to AWS ECS') {
+      steps {
+        script {
+          def buildTag = "v${env.BUILD_NUMBER}"
+          echo "🚀 Deploying image ${ECR_REPO}:${buildTag} to ECS..."
+          withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+            sh """
+              TASK_DEF=\$(aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].taskDefinition" --output text)
+              NEW_TASK_DEF=\$(aws ecs describe-task-definition --task-definition \$TASK_DEF --query "taskDefinition" | \
+                jq --arg IMAGE "${ECR_REPO}:${buildTag}" '.containerDefinitions[0].image=$IMAGE | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' | \
+                aws ecs register-task-definition --cli-input-json file:///dev/stdin --query "taskDefinition.taskDefinitionArn" --output text)
+              aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition \$NEW_TASK_DEF
+            """
+          }
+        }
+      }
+    }
 
 
   }
