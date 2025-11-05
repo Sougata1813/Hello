@@ -102,7 +102,6 @@ pipeline {
             docker build -t ${IMAGE_NAME}:${buildTag} .
             docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
             docker rm -f ${containerName} || true
-            
           """
 
           sh 'git rev-parse HEAD > ${STABLE_FILE}'
