@@ -12,7 +12,6 @@ pipeline {
         DOCKER_HUB_CREDENTIALS_ID = "docker-token"
         DOCKERHUB_USER = "sougata18"
 
-        // --- AWS Configuration ---
         AWS_CREDENTIALS_ID = "aws-creds"
         AWS_REGION = "us-east-1"
         AWS_ACCOUNT_ID = "654654627536"
@@ -34,16 +33,10 @@ pipeline {
             steps {
                 script {
                     echo "🏗️ Running Maven Build & Tests..."
-                    try {
-                        sh '''
-                            mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log
-                        '''
-                        def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
-                        if (jarStatus == '0') {
-                            error("❌ Maven build did not produce a JAR file.")
-                        }
-                    } catch (err) {
-                        error("❌ Maven build failed.")
+                    sh 'mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log'
+                    def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
+                    if (jarStatus == '0') {
+                        error("❌ Maven build did not produce a JAR file.")
                     }
                 }
             }
@@ -53,19 +46,15 @@ pipeline {
             steps {
                 script {
                     echo "💾 Compiling Database Scripts..."
-                    try {
-                        sh '''
-                            for f in $(find . -type f -name "*.sql" -o -name "*.prc" -o -name "*.pck" -o -name "*.tst"); do
-                                echo "Compiling $f"
-                                if grep -q "FAILME" "$f"; then
-                                    echo "Error in $f"
-                                    exit 1
-                                fi
-                            done | tee -a build.log
-                        '''
-                    } catch (err) {
-                        error("❌ Database compilation failed!")
-                    }
+                    sh '''
+                        for f in $(find . -type f -name "*.sql" -o -name "*.prc" -o -name "*.pck" -o -name "*.tst"); do
+                            echo "Compiling $f"
+                            if grep -q "FAILME" "$f"; then
+                                echo "Error in $f"
+                                exit 1
+                            fi
+                        done | tee -a build.log
+                    '''
                 }
             }
         }
@@ -90,45 +79,34 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build & Push') {
             steps {
                 script {
+                    echo "🐳 Building Docker image..."
+                    
+                    // Use Jenkins build number for new image
                     def buildTag = "v${env.BUILD_NUMBER}"
-                    echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
+
                     sh """
                         docker build -t ${IMAGE_NAME}:${buildTag} .
                         docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
+                        git rev-parse HEAD > ${STABLE_FILE}
                     """
-                    sh 'git rev-parse HEAD > ${STABLE_FILE}'
-                }
-            }
-        }
 
-        stage('Push Docker Image to Docker Hub') {
-            steps {
-                script {
-                    def buildTag = "v${env.BUILD_NUMBER}"
+                    // Push to Docker Hub
                     withCredentials([usernamePassword(
                         credentialsId: "${DOCKER_HUB_CREDENTIALS_ID}",
                         usernameVariable: 'DOCKER_USER',
                         passwordVariable: 'DOCKER_PASS'
                     )]) {
-                        echo "📤 Pushing Docker image to Docker Hub as ${DOCKER_USER}/${IMAGE_NAME}:${buildTag}"
                         sh """
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push $DOCKER_USER/${IMAGE_NAME}:${buildTag}
+                            docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
                             docker logout
                         """
                     }
-                }
-            }
-        }
 
-        stage('Push Docker Image to AWS ECR') {
-            steps {
-                script {
-                    def buildTag = "v${env.BUILD_NUMBER}"
-                    echo "📦 Pushing Docker image to AWS ECR..."
+                    // Push to AWS ECR
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                         sh """
                             aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
@@ -140,7 +118,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to AWS ECS (Latest ECR Image)') {
+        stage('Deploy Latest ECR Image to ECS') {
             steps {
                 script {
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
@@ -159,14 +137,14 @@ pipeline {
                             IMAGE_URI=\${REPO}:\$LATEST_TAG
                             echo "✅ Latest image URI: \$IMAGE_URI"
 
-                            echo "📦 Fetching current task definition..."
+                            # Fetch current task definition
                             TASK_DEF_ARN=\$(aws ecs describe-services --cluster \$CLUSTER --services \$SERVICE \
                                 --query "services[0].taskDefinition" --output text)
 
-                            echo "🧾 Describing task definition: \$TASK_DEF_ARN"
-                            aws ecs describe-task-definition --task-definition \$TASK_DEF_ARN --query "taskDefinition" > task-def.json
+                            # Update task definition JSON
+                            aws ecs describe-task-definition --task-definition \$TASK_DEF_ARN \
+                                --query "taskDefinition" > task-def.json
 
-                            echo "🛠️ Updating container image in task definition..."
                             cat task-def.json | jq --arg IMAGE "\$IMAGE_URI" '
                                 .containerDefinitions[0].image = \$IMAGE
                                 | del(
@@ -181,11 +159,11 @@ pipeline {
                                 )
                             ' > new-task-def.json
 
-                            echo "📋 Registering new task definition..."
+                            # Register new task definition
                             NEW_TASK_DEF_ARN=\$(aws ecs register-task-definition --cli-input-json file://new-task-def.json \
                                 --query "taskDefinition.taskDefinitionArn" --output text)
 
-                            echo "🔄 Updating ECS service to use new task definition..."
+                            # Update ECS service
                             aws ecs update-service --cluster \$CLUSTER --service \$SERVICE --task-definition \$NEW_TASK_DEF_ARN
 
                             echo "✅ ECS service updated successfully to latest image: \$IMAGE_URI"
@@ -194,7 +172,6 @@ pipeline {
                 }
             }
         }
-
     }
 
     post {
@@ -227,22 +204,11 @@ pipeline {
                         echo "⚠️ No stable commit file found — cannot rollback Git."
                     }
                 }
-                sh '''
-                    container_name="cicdpipeline_app"
-                    prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | sed -n 2p)
-                    if [ -n "$prev_image" ]; then
-                        echo "Rolling back to previous Docker image: $prev_image"
-                        docker rm -f $container_name || true
-                        docker run -d --name $container_name -p 9090:8080 $prev_image
-                    else
-                        echo "⚠️ No previous image found for rollback."
-                    fi
-                '''
             }
         }
 
         success {
-            echo "✅ Build succeeded — latest image deployed to ECS & pushed to Docker Hub and ECR."
+            echo "✅ Build succeeded — image deployed to ECS & pushed to Docker Hub/ECR."
         }
 
         always {
