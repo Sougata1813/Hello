@@ -18,7 +18,7 @@ pipeline {
     AWS_ACCOUNT_ID = "654654627536"
     ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
     ECS_CLUSTER = "mycicdpipeline"
-    ECS_SERVICE = "cicdpipeline_family-service-r6vn091o"
+    ECS_SERVICE = "cicdpipeline_task-service"
   }
 
   stages {
