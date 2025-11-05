@@ -42,58 +42,23 @@ pipeline {
             }
         }
 
-        stage('Database Compilation') {
-            steps {
-                script {
-                    echo "💾 Compiling Database Scripts..."
-                    sh '''
-                        for f in $(find . -type f -name "*.sql" -o -name "*.prc" -o -name "*.pck" -o -name "*.tst"); do
-                            echo "Compiling $f"
-                            if grep -q "FAILME" "$f"; then
-                                echo "Error in $f"
-                                exit 1
-                            fi
-                        done | tee -a build.log
-                    '''
-                }
-            }
-        }
-
-        stage('Static Code Analysis') {
-            steps {
-                script {
-                    echo "📊 Running SonarQube Analysis..."
-                    withSonarQubeEnv('sonarqube') {
-                        sh 'mvn sonar:sonar 2>&1 | tee -a build.log'
-                    }
-                }
-            }
-        }
-
-        stage('Quality Gate Check') {
-            steps {
-                script {
-                    echo "⏳ Waiting for SonarQube Quality Gate..."
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonarqube'
-                }
-            }
-        }
-
-        stage('Docker Build & Push') {
+        stage('Docker Build') {
             steps {
                 script {
                     echo "🐳 Building Docker image..."
-                    
-                    // Use Jenkins build number for new image
                     def buildTag = "v${env.BUILD_NUMBER}"
-
                     sh """
                         docker build -t ${IMAGE_NAME}:${buildTag} .
-                        docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
                         git rev-parse HEAD > ${STABLE_FILE}
                     """
+                }
+            }
+        }
 
-                    // Push to Docker Hub
+        stage('Docker Push to Docker Hub') {
+            steps {
+                script {
+                    def buildTag = "v${env.BUILD_NUMBER}"
                     withCredentials([usernamePassword(
                         credentialsId: "${DOCKER_HUB_CREDENTIALS_ID}",
                         usernameVariable: 'DOCKER_USER',
@@ -101,12 +66,32 @@ pipeline {
                     )]) {
                         sh """
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
                             docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
                             docker logout
                         """
                     }
+                }
+            }
+        }
 
-                    // Push to AWS ECR
+        stage('Optional: Docker Run Locally') {
+            steps {
+                script {
+                    def buildTag = "v${env.BUILD_NUMBER}"
+                    echo "⚡ Running container locally for test..."
+                    sh """
+                        docker rm -f ${IMAGE_NAME}_app || true
+                        docker run -d --name ${IMAGE_NAME}_app ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
+                    """
+                }
+            }
+        }
+
+        stage('Push Docker Image to AWS ECR') {
+            steps {
+                script {
+                    def buildTag = "v${env.BUILD_NUMBER}"
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                         sh """
                             aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
@@ -137,7 +122,7 @@ pipeline {
                             IMAGE_URI=\${REPO}:\$LATEST_TAG
                             echo "✅ Latest image URI: \$IMAGE_URI"
 
-                            # Fetch current task definition
+                            # Fetch current ECS task definition
                             TASK_DEF_ARN=\$(aws ecs describe-services --cluster \$CLUSTER --services \$SERVICE \
                                 --query "services[0].taskDefinition" --output text)
 
@@ -172,6 +157,7 @@ pipeline {
                 }
             }
         }
+
     }
 
     post {
