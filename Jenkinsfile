@@ -156,7 +156,7 @@ pipeline {
             sh """
               TASK_DEF=\$(aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].taskDefinition" --output text)
               NEW_TASK_DEF=\$(aws ecs describe-task-definition --task-definition \$TASK_DEF --query "taskDefinition" | \
-                jq --arg IMAGE "${ECR_REPO}:${buildTag}" '.containerDefinitions[0].image=$IMAGE | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' | \
+                jq --arg IMAGE "${ECR_REPO}:${buildTag}" '.containerDefinitions[0].image=$IMAGE_NAME | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' | \
                 aws ecs register-task-definition --cli-input-json file:///dev/stdin --query "taskDefinition.taskDefinitionArn" --output text)
               aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition \$NEW_TASK_DEF
             """
