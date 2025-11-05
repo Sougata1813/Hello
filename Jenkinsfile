@@ -9,8 +9,16 @@ pipeline {
     IMAGE_NAME = "cicdpipeline"
     STABLE_FILE = "last_stable_commit.txt"
     GIT_CREDENTIALS_ID = "github-token"
-    DOCKER_HUB_CREDENTIALS_ID = "docker-token"   // <-- Add your Docker Hub credential ID here
-    DOCKERHUB_USER = "sougata18"             // <-- Replace with your Docker Hub username
+    DOCKER_HUB_CREDENTIALS_ID = "docker-token"
+    DOCKERHUB_USER = "sougata18"
+
+    // --- AWS Configuration ---
+    AWS_CREDENTIALS_ID = "aws-creds"             // Jenkins AWS Credentials ID
+    AWS_REGION = "us-east-1"
+    AWS_ACCOUNT_ID = "654654627536"              // Replace with your AWS account ID
+    ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
+    //ECS_CLUSTER = "MyECSCluster"                 // Replace with your ECS Cluster name
+    //ECS_SERVICE = "MyECSService"                 // Replace with your ECS Service name
   }
 
   stages {
@@ -28,16 +36,13 @@ pipeline {
           echo "🏗️ Running Maven Build & Tests..."
           try {
             sh '''
-              echo "Cleaning and packaging application..."
               mvn clean test package spring-boot:repackage -DskipTests=false 2>&1 | tee build.log
             '''
             def jarStatus = sh(script: 'ls -1 target/*.jar 2>/dev/null | wc -l', returnStdout: true).trim()
             if (jarStatus == '0') {
-              error("❌ Maven build did not produce a JAR file — check your pom.xml or source files.")
+              error("❌ Maven build did not produce a JAR file.")
             }
-            echo "✅ Maven build successful — JAR found in target/."
           } catch (err) {
-            echo "❌ Maven build failed! Check build.log for details."
             error("❌ Maven build failed.")
           }
         }
@@ -85,23 +90,18 @@ pipeline {
       }
     }
 
-    stage('Docker Build & Deploy') {
-      when {
-        expression {
-          currentBuild.resultIsBetterOrEqualTo('SUCCESS')
-        }
-      }
+    stage('Docker Build') {
       steps {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
           def containerName = "${IMAGE_NAME}_app"
 
           echo "🐳 Building Docker image: ${IMAGE_NAME}:${buildTag}"
-
           sh """
             docker build -t ${IMAGE_NAME}:${buildTag} .
             docker tag ${IMAGE_NAME}:${buildTag} ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag}
             docker rm -f ${containerName} || true
+            
           """
 
           sh 'git rev-parse HEAD > ${STABLE_FILE}'
@@ -109,22 +109,18 @@ pipeline {
       }
     }
 
-    // ✅ Push Docker Image to Docker Hub
-          stage('Push Docker Image to Docker Hub') {
+    stage('Push Docker Image to Docker Hub') {
       steps {
         script {
           def buildTag = "v${env.BUILD_NUMBER}"
-
           withCredentials([usernamePassword(
             credentialsId: "${DOCKER_HUB_CREDENTIALS_ID}",
             usernameVariable: 'DOCKER_USER',
             passwordVariable: 'DOCKER_PASS'
           )]) {
             echo "📤 Pushing Docker image to Docker Hub as ${DOCKER_USER}/${IMAGE_NAME}:${buildTag}"
-
             sh """
               echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-              docker tag ${IMAGE_NAME}:${buildTag} $DOCKER_USER/${IMAGE_NAME}:${buildTag}
               docker push $DOCKER_USER/${IMAGE_NAME}:${buildTag}
               docker logout
             """
@@ -132,6 +128,24 @@ pipeline {
         }
       }
     }
+
+    // ✅ Push Docker Image to AWS ECR
+    stage('Push Docker Image to AWS ECR') {
+      steps {
+        script {
+          def buildTag = "v${env.BUILD_NUMBER}"
+          echo "📦 Pushing Docker image to AWS ECR..."
+          withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+            sh """
+              aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
+              docker tag ${DOCKERHUB_USER}/${IMAGE_NAME}:${buildTag} ${ECR_REPO}:${buildTag}
+              docker push ${ECR_REPO}:${buildTag}
+            """
+          }
+        }
+      }
+    }
+
 
 
 
@@ -141,7 +155,6 @@ pipeline {
     failure {
       script {
         echo "❌ Pipeline failed — starting rollback..."
-
         def failedFile = sh(
           script: "grep -Eo '/[^ ]+\\.(java|jsp|sql|prc|pck|tst)' ${env.WORKSPACE}/build.log | head -1 || true",
           returnStdout: true
@@ -167,11 +180,7 @@ pipeline {
           } else {
             echo "⚠️ No stable commit file found — cannot rollback Git."
           }
-        } else {
-          echo "⚠️ Could not detect failed file — skipping Git rollback."
         }
-
-        echo "🐳 Rolling back Docker container..."
         sh '''
           container_name="cicdpipeline_app"
           prev_image=$(docker images --format "{{.Repository}}:{{.Tag}}" cicdpipeline | sort -r | sed -n 2p)
@@ -187,7 +196,7 @@ pipeline {
     }
 
     success {
-      echo "✅ Build succeeded — new Docker image deployed and pushed to Docker Hub."
+      echo "✅ Build succeeded — image deployed to ECS & pushed to both Docker Hub and ECR."
     }
 
     always {
