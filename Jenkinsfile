@@ -154,47 +154,44 @@ pipeline {
           withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
             sh """
               set -e
-              CLUSTER="${ECS_CLUSTER}"
-              SERVICE="${ECS_SERVICE}"
-              IMAGE="${ECR_REPO}:${buildTag}"
+              CLUSTER=${ECS_CLUSTER}
+              SERVICE=${ECS_SERVICE}
+              IMAGE=${ECR_REPO}:${buildTag}
 
               echo "📦 Fetching current task definition..."
-              TASK_DEF_ARN=\$(aws ecs describe-services \
-                --cluster \$CLUSTER \
-                --services \$SERVICE \
-                --query "services[0].taskDefinition" \
-                --output text)
+              TASK_DEF_ARN=\$(aws ecs describe-services --cluster \$CLUSTER --services \$SERVICE --query "services[0].taskDefinition" --output text)
 
               echo "🧾 Describing task definition: \$TASK_DEF_ARN"
-              aws ecs describe-task-definition \
-                --task-definition \$TASK_DEF_ARN \
-                --query "taskDefinition" > task-def.json
+              aws ecs describe-task-definition --task-definition \$TASK_DEF_ARN --query "taskDefinition" > task-def.json
 
               echo "🛠️ Updating container image in task definition..."
-              cat task-def.json | jq --arg IMAGE "\$IMAGE" \
-                '.containerDefinitions[0].image = \$IMAGE
-                 | del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities)' > new-task-def.json
+              cat task-def.json | jq --arg IMAGE "\$IMAGE" '
+                .containerDefinitions[0].image = \$IMAGE
+                | del(
+                    .status,
+                    .revision,
+                    .taskDefinitionArn,
+                    .requiresAttributes,
+                    .compatibilities,
+                    .registeredAt,
+                    .registeredBy,
+                    .deregisteredAt
+                  )
+              ' > new-task-def.json
 
               echo "📋 Registering new task definition..."
-              NEW_TASK_DEF_ARN=\$(aws ecs register-task-definition \
-                --cli-input-json file://new-task-def.json \
-                --query "taskDefinition.taskDefinitionArn" \
-                --output text)
+              NEW_TASK_DEF_ARN=\$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --query "taskDefinition.taskDefinitionArn" --output text)
 
-              echo "✅ New task definition: \$NEW_TASK_DEF_ARN"
+              echo "🔄 Updating ECS service to use new task definition..."
+              aws ecs update-service --cluster \$CLUSTER --service \$SERVICE --task-definition \$NEW_TASK_DEF_ARN
 
-              echo "🚀 Updating ECS service..."
-              aws ecs update-service \
-                --cluster \$CLUSTER \
-                --service \$SERVICE \
-                --task-definition \$NEW_TASK_DEF_ARN
-
-              echo "🎉 ECS deployment initiated successfully!"
+              echo "✅ ECS service updated successfully to task definition: \$NEW_TASK_DEF_ARN"
             """
           }
         }
       }
     }
+
 
   }
 
